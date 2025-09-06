@@ -1,4 +1,4 @@
-# autotask
+# fb-imposter
 
 A Telegram bot for reporting Facebook impersonation. Users interactively submit their details and ID files via Telegram, and the bot automatically fills and submits the Facebook impersonation report form using Playwright.
 
@@ -41,7 +41,7 @@ temp/
 
    ```sh
    git clone <your-repo-url>
-   cd autotask
+   cd fb-imposter
    ```
 
 2. **Install dependencies**
@@ -114,7 +114,7 @@ MIT License (add your own license if needed).
 
 ## Authors
 
-- [Your Name] (replace with your name/contact)
+- Fahim Ahamed
 
 ---
 
@@ -138,3 +138,4 @@ MIT License (add your own license if needed).
 ---
 
 For questions or support, open an issue or contact the author.
+
