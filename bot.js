@@ -16,10 +16,10 @@ const fields = [
   { key: "victimName", question: "👤 Enter the victim's full name:" },
   { key: "victimEmail", question: "📧 Enter the victim's contact email:", validate: validateEmail },
   { key: "impostorName", question: "🕵️ Enter the impostor's full name:" },
-  { key: "impostorEmail", question: "📧 Enter the impostor's email:", validate: validateEmail },
+  { key: "impostorEmail", question: "📧 Enter the impostor's email or /empty (leave blank):", validate: validateEmailOrEmpty },
   { key: "impostorProfileUrl", question: "🔗 Enter the impostor's profile URL:", validate: validateUrl },
-  { key: "message", question: "📝 Enter the message for Facebook (max 500 chars):", validate: validateMessage },
-  { key: "idFiles", question: "📂 Upload your ID file(s). Send /done when finished." }
+  { key: "message", question: "📝 Enter the message for Facebook (no limit):" },
+  { key: "idFiles", question: "📂 Upload your ID image file(s). Send /done when finished." }
 ];
 
 // --- In-Memory State ---
@@ -40,9 +40,9 @@ This bot helps you prepare and submit impersonation reports in a guided step-by-
 📝 *How it works:*
 1. Start with /takedata
 2. Answer each question (victim, impostor, etc.)
-3. Upload ID documents (at least one required)
+3. Upload ID images (at least one required)
 4. Type /done after uploading files
-5. The bot will run the report script and show you results with a screenshot.
+5. The bot will run the report script and show you results with screenshots.
 
 ⏳ *Notes:*
 - You have *10 minutes per step*. If you wait too long, the session will expire.
@@ -79,12 +79,16 @@ bot.on("message", async msg => {
 
   resetIdleTimeout(chatId);
 
-  // --- File uploads (ID files) ---
+  // --- File uploads (ID images) ---
   if (field.key === "idFiles") {
     if (msg.document) {
+      const ext = path.extname(msg.document.file_name || "").toLowerCase();
+      if (![".png", ".jpg", ".jpeg", ".webp"].includes(ext)) {
+        return bot.sendMessage(chatId, "❌ Only image files are allowed. Upload a valid image.");
+      }
+
       try {
         const fileId = msg.document.file_id;
-        const ext = path.extname(msg.document.file_name || ".dat");
         const saveDir = path.join(__dirname, "temp", String(chatId), "uploads");
         fs.mkdirSync(saveDir, { recursive: true });
 
@@ -95,7 +99,7 @@ bot.on("message", async msg => {
         state.idFiles.push(savePath);
         state.responses.idFiles = state.idFiles;
 
-        bot.sendMessage(chatId, `✅ File saved: ${path.basename(savePath)}\nUpload more or type /done`);
+        bot.sendMessage(chatId, `✅ Image saved: ${path.basename(savePath)}\nUpload more or type /done`);
       } catch (err) {
         bot.sendMessage(chatId, `❌ File upload failed: ${err.message}`);
       }
@@ -103,11 +107,11 @@ bot.on("message", async msg => {
     }
 
     if (msg.text === "/done") {
-      if (!state.idFiles.length) return bot.sendMessage(chatId, "⚠️ Upload at least one ID file.");
+      if (!state.idFiles.length) return bot.sendMessage(chatId, "⚠️ Upload at least one ID image.");
       return saveDataAndRun(chatId);
     }
 
-    return bot.sendMessage(chatId, "⚠️ Please upload a valid file or type /done.");
+    return bot.sendMessage(chatId, "⚠️ Please upload a valid image or type /done.");
   }
 
   // --- Text responses ---
@@ -115,7 +119,7 @@ bot.on("message", async msg => {
     if (field.validate && !field.validate(msg.text)) {
       return bot.sendMessage(chatId, `❌ Invalid input. Try again:\n${field.question}`);
     }
-    state.responses[field.key] = msg.text.trim();
+    state.responses[field.key] = msg.text.trim() === "/empty" ? "" : msg.text.trim();
     state.step++;
     askField(chatId);
   }
@@ -199,7 +203,7 @@ function saveDataAndRun(chatId) {
         `👤 Victim: ${state.responses.victimName}`,
         `📧 Victim Email: ${state.responses.victimEmail}`,
         `🕵️ Impostor: ${state.responses.impostorName}`,
-        `📧 Impostor Email: ${state.responses.impostorEmail}`,
+        `📧 Impostor Email: ${state.responses.impostorEmail || "(empty)"}`,
         `🔗 Profile: ${state.responses.impostorProfileUrl}`,
         `📝 Message: ${state.responses.message}`,
         state.idFiles.length ? `📂 Files:\n- ${state.idFiles.map(f => path.basename(f)).join("\n- ")}` : null,
@@ -208,10 +212,16 @@ function saveDataAndRun(chatId) {
 
       await bot.editMessageText(`✅ Finished!\n\n${summary}`, { chat_id: chatId, message_id: progressMsgId });
 
-      // Screenshot if exists
-      const screenshotMatch = output.match(/📸 SCREENSHOT_PATH: (.+)/);
-      if (screenshotMatch && fs.existsSync(screenshotMatch[1].trim())) {
-        await bot.sendPhoto(chatId, screenshotMatch[1].trim(), { caption: "📸 Screenshot" });
+      // Send BEFORE_SUBMIT screenshot
+      const beforeMatch = output.match(/📸 BEFORE_SUBMIT_SCREENSHOT: (.+)/);
+      if (beforeMatch && fs.existsSync(beforeMatch[1].trim())) {
+        await bot.sendPhoto(chatId, beforeMatch[1].trim(), { caption: "📸 Screenshot BEFORE submission" });
+      }
+
+      // Send AFTER_SUBMIT screenshot
+      const afterMatch = output.match(/📸 AFTER_SUBMIT_SCREENSHOT: (.+)/);
+      if (afterMatch && fs.existsSync(afterMatch[1].trim())) {
+        await bot.sendPhoto(chatId, afterMatch[1].trim(), { caption: "📸 Screenshot AFTER submission" });
       }
 
       // Cleanup
@@ -230,11 +240,11 @@ function generateBar(percent) {
 function validateEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 }
+function validateEmailOrEmpty(email) {
+  return email.trim() === "/empty" || validateEmail(email);
+}
 function validateUrl(url) {
   return /^https?:\/\/[^\s]+$/.test(url.trim());
-}
-function validateMessage(msg) {
-  return msg.trim().length > 0 && msg.trim().length <= 500;
 }
 function randomString(len) {
   return Math.random().toString(36).substring(2, 2 + len);
