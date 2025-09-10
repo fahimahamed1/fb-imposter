@@ -2,7 +2,6 @@ require('dotenv').config();
 const { chromium } = require('playwright');
 const path = require('path');
 const fs = require('fs');
-const { getRandomAgent } = require('./agent');
 
 // Config
 const URL = 'https://www.facebook.com/help/contact/295309487309948?locale=en_US';
@@ -77,23 +76,12 @@ const saveCookies = async (context) => {
 
     console.log("🌐 Playwright headless mode:", HEADLESS);
 
-    const browser = await chromium.launch({
-      headless: HEADLESS,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--start-maximized', '--disable-dev-shm-usage'],
-      slowMo: HEADLESS ? 0 : 50
-    });
+    const browser = await chromium.launch({ headless: HEADLESS });
+    const context = await browser.newContext(); // default user agent
 
-    const context = await browser.newContext({
-      userAgent: getRandomAgent(true),
-      viewport: HEADLESS ? { width: 1280, height: 720 } : null,
-      screen: HEADLESS ? { width: 1280, height: 720 } : undefined
-    });
-
-    // Load saved cookies
     await loadCookies(context);
 
     const page = await context.newPage();
-
     console.log("🌐 Opening Facebook impersonation report form...");
     await page.goto(URL, { waitUntil: 'domcontentloaded' });
     await page.waitForLoadState("networkidle");
@@ -115,10 +103,7 @@ const saveCookies = async (context) => {
     if (cookieAccepted) {
       console.log('✅ Cookies accepted');
       await saveCookies(context);
-    } else {
-      console.log('🌐 Cookies already accepted or banner not found, skipping...');
     }
-    await page.waitForTimeout(1000);
 
     // Fill the form
     await clickRadioByLabel(page, "Someone created an account pretending to be me or a friend");
@@ -130,34 +115,39 @@ const saveCookies = async (context) => {
     await fillInput(page, "fullname", data.impostorName, "impostor full name");
     await fillInput(page, "impostor_email", data.impostorEmail, "impostor email");
 
-    if (data.idFiles && data.idFiles.length) {
+    if (data.idFiles?.length) {
       await uploadFiles(page, 'input[type="file"]', data.idFiles);
     }
 
     await fillInput(page, "profileurl", data.impostorProfileUrl, "impostor profile link");
     await fillTextarea(page, "Field219635071504253", data.message);
 
-    // -----------------------------
-    // Robust form submission detection
-    // -----------------------------
-    console.log("📤 Submitting form...");
+    // Screenshots + submission
+    console.log("📤 Preparing to submit form...");
+
+    // BEFORE submission screenshot
+    const beforeSubmitPath = path.join(process.cwd(), `fb-report-before-${Date.now()}.png`);
+    await page.screenshot({ path: beforeSubmitPath, fullPage: true });
+    console.log(`📸 BEFORE_SUBMIT_SCREENSHOT: ${beforeSubmitPath}`); // <-- log path for bot
+
+    // Submit the form
     const submitButton = await page.$('button:has-text("Send"), button[type="submit"], input[type="submit"]');
     if (!submitButton) throw new Error("❌ Submit button not found");
 
+    console.log("📤 Submitting form...");
     await submitButton.click({ force: true });
 
+    // Wait and detect result
     let resultMessage = '';
     try {
       const start = Date.now();
-      while (Date.now() - start < 15000) { // 15s max wait
+      while (Date.now() - start < 15000) {
         await page.waitForTimeout(500);
 
-        // Check for success or error messages
         const successMsg = await page.$('text=Form submitted successfully');
         const errorMsg = await page.$('text=error, text=try again, text=unable');
-
-        // Check URL for Facebook confirmation
         const currentURL = page.url();
+
         if (currentURL.startsWith('https://m.facebook.com/help/?submitted') && currentURL.includes('confirmation_id')) {
           resultMessage = "🎉 SUCCESS: Form submitted successfully (URL detected).";
           break;
@@ -169,20 +159,17 @@ const saveCookies = async (context) => {
           break;
         }
       }
-
-      if (!resultMessage) {
-        resultMessage = "⚠️ UNKNOWN: Could not confirm success or failure.";
-      }
-    } catch (err) {
+      if (!resultMessage) resultMessage = "⚠️ UNKNOWN: Could not confirm success or failure.";
+    } catch {
       resultMessage = "❌ FAILURE: Exception during submission detection.";
     }
 
     console.log(resultMessage);
 
-    // Final screenshot
-    const screenshotPath = path.join(process.cwd(), `fb-report-${Date.now()}.png`);
-    await page.screenshot({ path: screenshotPath, fullPage: true });
-    console.log(`📸 SCREENSHOT_PATH: ${screenshotPath}`);
+    // AFTER submission screenshot
+    const afterSubmitPath = path.join(process.cwd(), `fb-report-after-${Date.now()}.png`);
+    await page.screenshot({ path: afterSubmitPath, fullPage: true });
+    console.log(`📸 AFTER_SUBMIT_SCREENSHOT: ${afterSubmitPath}`); // <-- log path for bot
 
     console.log("👋 Closing browser...");
     await browser.close();
